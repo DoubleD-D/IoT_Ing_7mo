@@ -13,7 +13,7 @@ const char* mqtt_server = "192.168.100.16";      // Pon la IP de tu Raspberry Pi
 // 2. IDENTIFICADOR DEL REFRIGERADOR
 // ==========================================
 // Cambiar este aprtado para cada placa refri"n"
-String refriID = "refri2"; 
+String refriID = "refri4"; 
 
 // Generación automática de tópicos basados en el ID
 String topic_temp = "monitoreo/" + refriID + "/temperatura";
@@ -41,22 +41,11 @@ void callback(char* topic, byte* payload, unsigned int length) {
     mensaje += (char)payload[i];
   }
   
-  // ¡Aquí está la magia de la depuración!
-  Serial.print("Mensaje recibido en el topic [");
-  Serial.print(topic);
-  Serial.print("]: '");
-  Serial.print(mensaje);
-  Serial.println("'");
-  
   // Si Node-RED manda un "ON", prendemos el LED
   if (mensaje == "ON") {
-    Serial.println("¡Comando ON detectado! Encendiendo LED...");
     digitalWrite(LED_PIN, HIGH);
   } else if (mensaje == "OFF") {
-    Serial.println("¡Comando OFF detectado! Apagando LED...");
     digitalWrite(LED_PIN, LOW);
-  } else {
-    Serial.println("El mensaje no es exactamente 'ON' o 'OFF'. Ignorando...");
   }
 }
 

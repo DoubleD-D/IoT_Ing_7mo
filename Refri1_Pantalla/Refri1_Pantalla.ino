@@ -1,71 +1,145 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <DHT.h>
 #include <SPI.h>
-#include <TFT_eSPI.h> // Librería para la pantalla gráfica
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
 
 // ==========================================
 // 1. CONFIGURACIÓN DE RED Y MQTT
 // ==========================================
-const char* ssid = "NOMBRE_DE_TU_WIFI";       
-const char* password = "PASSWORD_DE_TU_WIFI"; 
-const char* mqtt_server = "192.168.1.X";      
+const char* ssid = "MEGACABLE-2.4G-ADA9";
+const char* password = "M4kh_41!j0*s33th4n_";
+const char* mqtt_server = "192.168.100.16"; 
 
-// ==========================================
-// 2. IDENTIFICADOR Y TÓPICOS
-// ==========================================
-String refriID = "refri1"; 
-String topic_temp = "monitoreo/" + refriID + "/temperatura";
-String topic_puerta = "monitoreo/" + refriID + "/puerta";
-String topic_alerta = "monitoreo/" + refriID + "/alerta";
-
-// ==========================================
-// 3. PINES FÍSICOS DEL HARDWARE
-// ==========================================
-#define DHT_PIN 4       // Pin de datos del sensor DHT22
-#define DHT_TYPE DHT22  // Cambia a DHT11 si usas ese modelo
-#define DOOR_PIN 5      // Pin del sensor magnético de puerta
-#define LED_PIN 2       // LED integrado para alertas
-
-// Inicialización de objetos
-DHT dht(DHT_PIN, DHT_TYPE);
-TFT_eSPI tft = TFT_eSPI(); 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-unsigned long lastMsg = 0;
+// ==========================================
+// 2. CONFIGURACIÓN DE LA PANTALLA CYD
+// ==========================================
+#define TFT_CS   15
+#define TFT_DC   2
+#define TFT_RST  -1  
+#define TFT_BL   21  
+
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+
+// Variables en memoria (Temperaturas y Puertas)
+float tempRefri2 = 0.0; String puertaRefri2 = "-";
+float tempRefri3 = 0.0; String puertaRefri3 = "-";
+float tempRefri4 = 0.0; String puertaRefri4 = "-";
 
 // ==========================================
-// 4. FUNCIÓN PARA RECIBIR ALERTAS
+// 3. FUNCIÓN PARA DIBUJAR LA INTERFAZ BASE
+// ==========================================
+void dibujarInterfazFija() {
+  tft.fillScreen(ILI9341_BLACK); 
+  
+  tft.setCursor(10, 10);
+  tft.setTextColor(ILI9341_YELLOW);
+  tft.setTextSize(2); 
+  tft.println("MONITOREO FARMACIA");
+  tft.drawLine(10, 30, 310, 30, ILI9341_WHITE); 
+
+  tft.setTextColor(ILI9341_CYAN); 
+  tft.setTextSize(2); 
+  
+  // Etiquetas fijas
+  tft.setCursor(10, 60);  tft.print("R2:");
+  tft.setCursor(10, 120); tft.print("R3:");
+  tft.setCursor(10, 180); tft.print("R4:");
+}
+
+// ==========================================
+// 4. FUNCIÓN PARA ACTUALIZAR NÚMEROS Y PUERTAS
+// ==========================================
+void actualizarDatos() {
+  tft.setTextSize(2); 
+  
+  // --- REFRI 2 ---
+  // Color Temperatura
+  if(tempRefri2 > 8.0) tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+  else tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  tft.setCursor(55, 60);
+  tft.print(tempRefri2, 1); tft.print("C  ");
+
+  // Color Puerta
+  if(puertaRefri2 == "Abierta" || puertaRefri2 == "1") tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+  else tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
+  tft.setCursor(150, 60);
+  tft.print("["); tft.print(puertaRefri2); tft.print("]   ");
+
+
+  // --- REFRI 3 ---
+  if(tempRefri3 > 8.0) tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+  else tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  tft.setCursor(55, 120);
+  tft.print(tempRefri3, 1); tft.print("C  ");
+
+  if(puertaRefri3 == "Abierta" || puertaRefri3 == "1") tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+  else tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
+  tft.setCursor(150, 120);
+  tft.print("["); tft.print(puertaRefri3); tft.print("]   ");
+
+
+  // --- REFRI 4 ---
+  if(tempRefri4 > 8.0) tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+  else tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  tft.setCursor(55, 180);
+  tft.print(tempRefri4, 1); tft.print("C  ");
+
+  if(puertaRefri4 == "Abierta" || puertaRefri4 == "1") tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+  else tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
+  tft.setCursor(150, 180);
+  tft.print("["); tft.print(puertaRefri4); tft.print("]   ");
+}
+
+// ==========================================
+// 5. FUNCIÓN PARA RECIBIR LOS DATOS MQTT
 // ==========================================
 void callback(char* topic, byte* payload, unsigned int length) {
-  String mensaje = "";
+  String jsonPayload = "";
   for (int i = 0; i < length; i++) {
-    mensaje += (char)payload[i];
+    jsonPayload += (char)payload[i];
   }
+
+  StaticJsonDocument<300> doc;
+  DeserializationError error = deserializeJson(doc, jsonPayload);
   
-  // Control del LED de Alerta y actualización visual en pantalla
-  if (mensaje == "ON") {
-    digitalWrite(LED_PIN, HIGH);
-    tft.fillRect(0, 180, 320, 40, TFT_RED);
-    tft.setTextColor(TFT_WHITE, TFT_RED);
-    tft.drawCentreString("! ALERTA DE TEMPERATURA !", 160, 190, 4);
-  } else if (mensaje == "OFF") {
-    digitalWrite(LED_PIN, LOW);
-    tft.fillRect(0, 180, 320, 40, TFT_BLACK); // Borrar alerta
+  if (!error) {
+    String topicStr = String(topic);
+    
+    // Extraemos datos (si no vienen, mantienen su valor anterior)
+    float tempRx = doc["temperatura"] | -99.0;
+    String puertaRx = doc["puerta"] | ""; 
+
+    if (topicStr.indexOf("refri2") > 0) {
+      if(tempRx != -99.0) tempRefri2 = tempRx;
+      if(puertaRx != "") puertaRefri2 = puertaRx;
+    } 
+    else if (topicStr.indexOf("refri3") > 0) {
+      if(tempRx != -99.0) tempRefri3 = tempRx;
+      if(puertaRx != "") puertaRefri3 = puertaRx;
+    } 
+    else if (topicStr.indexOf("refri4") > 0) {
+      if(tempRx != -99.0) tempRefri4 = tempRx;
+      if(puertaRx != "") puertaRefri4 = puertaRx;
+    }
+    
+    actualizarDatos();
   }
 }
 
 // ==========================================
-// 5. FUNCIÓN DE CONEXIÓN WI-FI Y MQTT
+// 6. FUNCIÓN DE CONEXIÓN MQTT
 // ==========================================
 void reconnect() {
   while (!client.connected()) {
-    tft.drawString("Conectando MQTT...", 10, 10, 2);
-    if (client.connect(refriID.c_str())) {
-      client.subscribe(topic_alerta.c_str());
-      tft.fillRect(0, 0, 320, 30, TFT_BLACK); // Limpiar mensaje
+    if (client.connect("MonitorCentralCYD")) {
+      client.subscribe("monitoreo/+/temperatura"); // Ajusta el topic si es necesario
+      dibujarInterfazFija(); 
+      actualizarDatos();
     } else {
       delay(5000);
     }
@@ -73,97 +147,44 @@ void reconnect() {
 }
 
 // ==========================================
-// 6. SETUP PRINCIPAL
+// 7. SETUP PRINCIPAL
 // ==========================================
 void setup() {
-  // Configuración de Pines
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
+  Serial.begin(115200);
+
+  pinMode(TFT_BL, OUTPUT);
+  digitalWrite(TFT_BL, HIGH);
+
+  SPI.begin(14, 12, 13, 15);
+
+  tft.begin();
   
-  // Usamos INPUT_PULLUP para el sensor magnético (se activa al separarse del GND)
-  pinMode(DOOR_PIN, INPUT_PULLUP); 
+  // Rotación 3: Horizontal con el conector USB a la derecha (como en tu foto)
+  tft.setRotation(3); 
+  
+  // Borrado profundo forzado al arrancar para eliminar texto fantasma
+  tft.fillScreen(ILI9341_BLACK);
+  
+  tft.setCursor(10, 100);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setTextSize(2);
+  tft.println("Conectando WiFi...");
 
-  // Iniciar sensor DHT y Pantalla
-  dht.begin();
-  tft.init();
-  tft.setRotation(1); // Orientación horizontal
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-
-  // Pantalla de inicio
-  tft.drawCentreString("Iniciando Monitoreo...", 160, 120, 4);
-
-  // Conexión Wi-Fi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
   }
-  
-  tft.fillScreen(TFT_BLACK); // Limpiar pantalla al conectar
-  tft.drawCentreString("WIFI CONECTADO", 160, 10, 2);
 
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
 }
 
 // ==========================================
-// 7. BUCLE PRINCIPAL (LOOP)
+// 8. LOOP
 // ==========================================
 void loop() {
   if (!client.connected()) {
     reconnect();
   }
   client.loop();
-
-  unsigned long now = millis();
-  
-  // Leer y enviar datos cada 10 segundos
-  if (now - lastMsg > 10000) {
-    lastMsg = now;
-
-    // --- LECTURA FÍSICA DE SENSORES ---
-    float tempFisica = dht.readTemperature();
-    
-    // El sensor magnético da HIGH (1) cuando se abre (imán lejos del GND)
-    int puertaFisica = digitalRead(DOOR_PIN); 
-
-    // Validar si el sensor DHT falló
-    if (isnan(tempFisica)) {
-      tft.setTextColor(TFT_RED, TFT_BLACK);
-      tft.drawCentreString("Error leyendo DHT22!", 160, 120, 4);
-      return; 
-    }
-
-    // --- ACTUALIZACIÓN DE PANTALLA TÁCTIL ---
-    // Mostrar Temperatura
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.drawCentreString("TEMPERATURA ACTUAL", 160, 50, 4);
-    
-    char tempStr[10];
-    sprintf(tempStr, "%.1f C", tempFisica);
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.drawCentreString(tempStr, 160, 90, 7); // Tamaño de fuente grande
-
-    // Mostrar estado de la Puerta
-    tft.fillRect(0, 140, 320, 30, TFT_BLACK); // Limpiar zona de puerta
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    if (puertaFisica == 1) {
-      tft.setTextColor(TFT_RED, TFT_BLACK);
-      tft.drawCentreString("PUERTA ABIERTA", 160, 140, 4);
-    } else {
-      tft.setTextColor(TFT_GREEN, TFT_BLACK);
-      tft.drawCentreString("PUERTA CERRADA", 160, 140, 4);
-    }
-
-    // --- CREACIÓN DEL JSON ---
-    StaticJsonDocument<200> doc;
-    doc["temperatura"] = tempFisica;
-    doc["puerta"] = puertaFisica;
-    
-    char jsonBuffer[512];
-    serializeJson(doc, jsonBuffer);
-
-    // --- PUBLICACIÓN MQTT ---
-    client.publish(topic_temp.c_str(), jsonBuffer);
-  }
 }
